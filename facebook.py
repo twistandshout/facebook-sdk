@@ -60,6 +60,8 @@ try:
 except ImportError:
     from cgi import parse_qs
 
+from google.appengine.api import urlfetch
+
 
 class GraphAPI(object):
     """A client for the Facebook Graph API.
@@ -93,6 +95,15 @@ class GraphAPI(object):
     def __init__(self, access_token=None, timeout=None):
         self.access_token = access_token
         self.timeout = timeout
+
+    def _make_request_url(self, path, args):
+        GRAPH_URL = "https://graph.facebook.com"
+        url = "%s/%s?%s" % (GRAPH_URL, path, urllib.urlencode(args))
+        return url
+
+    def request(self, path, args=None, post_args=None):
+        response = self._make_request(path, args, post_args)
+        return response
 
     def get_object(self, id, **args):
         """Fetchs the given object from the graph."""
@@ -274,7 +285,7 @@ class GraphAPI(object):
         content_type = 'multipart/form-data; boundary=%s' % BOUNDARY
         return content_type, body
 
-    def request(self, path, args=None, post_args=None):
+    def _make_request(self, path, args=None, post_args=None):
         """Fetches the given path in the Graph API.
 
         We translate args to a valid query string. If post_args is
@@ -291,32 +302,29 @@ class GraphAPI(object):
                 args["access_token"] = self.access_token
         post_data = None if post_args is None else urllib.urlencode(post_args)
         try:
-            file = urllib2.urlopen("https://graph.facebook.com/" + path + "?" +
-                    urllib.urlencode(args), post_data, timeout=self.timeout)
+            url = self._make_request_url(path, args)
+            if post_data:
+                file = urlfetch.fetch(url=url,
+                                      method='POST',
+                                      payload=post_data,
+                                      deadline=self.timeout)
+            else:
+                file = urlfetch.fetch(url=url,
+                                      deadline=self.timeout)
+            contents = file.content
+
         except urllib2.HTTPError, e:
             response = _parse_json(e.read())
             raise GraphAPIError(response)
-        except TypeError:
-            # Timeout support for Python <2.6
-            if self.timeout:
-                socket.setdefaulttimeout(self.timeout)
-            file = urllib2.urlopen("https://graph.facebook.com/" + path + "?" +
-                                    urllib.urlencode(args), post_data)
-        try:
-            fileInfo = file.info()
-            if fileInfo.maintype == 'text':
-                response = _parse_json(file.read())
-            elif fileInfo.maintype == 'image':
-                mimetype = fileInfo['content-type']
-                response = {
-                    "data": file.read(),
-                    "mime-type": mimetype,
-                    "url": file.url,
-                }
-            else:
-                raise GraphAPIError('Maintype was not text or image')
-        finally:
-            file.close()
+
+        # Assume we only get back text for now
+        # TODO: allow images
+        content_major = file.headers['content-type'].split('/')[0]
+        if content_major == 'text':
+            response = _parse_json(contents)
+        else:
+            raise GraphAPIError("Response was not text/javascript")
+
         if response and isinstance(response, dict) and response.get("error"):
             raise GraphAPIError(response["error"]["type"],
                                 response["error"]["message"])
