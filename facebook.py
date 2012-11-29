@@ -326,8 +326,8 @@ class GraphAPI(object):
             raise GraphAPIError("Response was not text/javascript")
 
         if response and isinstance(response, dict) and response.get("error"):
-            raise GraphAPIError(response["error"]["type"],
-                                response["error"]["message"])
+            raise GraphAPIError("%s: %s" % (response["error"]["type"],
+                                            response["error"]["message"]))
         return response
 
     def api_request(self, path, args=None, post_args=None):
